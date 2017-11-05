@@ -1,14 +1,11 @@
 # zabbix-tee-riemann
 
-A Clojure library designed to ... well, that part is up to you.
+zabbix-tee-riemann is a proxy for zabbix that forwards the data to both zabbix and riemamn. This allows you to use your existing zabbix configurations _and_ use the cool stuff from riemann.
 
 ## Usage
 
-FIXME
+`lein run` should do the trick to run the server. Point your zabbix agent to the address of this service instead of the zabbix server.
 
-## License
+## Disclaimer
 
-Copyright © 2017 FIXME
-
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+Use at your own risk.
