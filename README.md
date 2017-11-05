@@ -1,6 +1,6 @@
 # zabbix-tee-riemann
 
-zabbix-tee-riemann is a proxy for zabbix that forwards the data to both zabbix and riemamn. This allows you to use your existing zabbix configurations _and_ use the cool stuff from riemann.
+zabbix-tee-riemann is a proxy for zabbix that forwards the data to both zabbix and riemann. This allows you to use your existing zabbix configurations _and_ use the cool stuff from riemann.
 
 ## Usage
 
