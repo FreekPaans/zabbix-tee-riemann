@@ -1,7 +1,8 @@
 (ns zabbix-tee-riemann.core
   (:require
     [clojure.java.io :as io]
-    [clojure.data.json :as json])
+    [clojure.data.json :as json]
+    [clojure.pprint :refer [pprint]])
   (:import
     [io.netty.bootstrap ServerBootstrap Bootstrap]
     [io.netty.channel.socket.nio NioServerSocketChannel]
@@ -13,13 +14,8 @@
     [io.netty.handler.logging LoggingHandler LogLevel]
     [java.nio ByteBuffer ByteOrder]
     [java.io ByteArrayOutputStream]
-    [io.netty.handler.codec.bytes ByteArrayEncoder]
-    ))
-
-(defn foo
-  "I don't do a whole lot."
-  [x]
-  (println x "Hello, World!"))
+    [io.netty.handler.codec.bytes ByteArrayEncoder])
+  (:gen-class))
 
 (defn make-server-bootstrap [group handlers-factory]
   (let [bootstrap (ServerBootstrap.)]
@@ -169,7 +165,7 @@
 (defn echo-handler []
   (proxy [ChannelInboundHandlerAdapter] []
     (channelRead [ctx msg]
-      (println msg)
+      (pprint msg)
       (.fireChannelRead ctx msg))))
 
 (defn make-server-handlers []
@@ -196,6 +192,9 @@
               (fn [fut]
                 (.shutdownGracefully event-loop-group)))))
       channel)))
+
+(defn -main [& args]
+  (start-server 9002))
 
 (comment
   (def server (start-server 9002))
