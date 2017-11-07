@@ -67,6 +67,7 @@
             (let [content-buf (byte-array content-length)]
               (.readBytes msg content-buf)
               content-buf))]
+
     (proxy [ByteToMessageDecoder] []
       (decode [ctx msg out]
         (let [readable-bytes (.readableBytes msg)]
@@ -88,12 +89,12 @@
     (operationComplete [this fut]
       (callback fut))))
 
-(defn map-msg-netty-outbound-handler [f]
+(defn map-netty-outbound-handler [f]
   (proxy [ChannelOutboundHandlerAdapter] []
     (write [ctx msg promise]
       (.writeAndFlush ctx (f msg) promise))))
 
-(defn forward-msg-netty-inbound-handler [dest-channel]
+(defn forward-netty-inbound-handler [dest-channel]
   (proxy [ChannelInboundHandlerAdapter] []
     (channelInactive [ctx]
       (.close dest-channel))
@@ -144,33 +145,31 @@
                             (fn [_]
                               (reset! outgoing-channel  (.channel connect-result))
                               (.read incoming-channel))))))
-
         (channelRead [ctx msg]
           (.writeAndFlush @outgoing-channel msg)))))
 
 (defn server-bootstrap [group handlers-factory]
   (let [bootstrap (ServerBootstrap.)]
-    (do
-      (.. bootstrap
-          (group group)
-          (channel NioServerSocketChannel)
-          (childHandler
-            (proxy [ChannelInitializer] []
-              (initChannel [channel]
-                (.. channel
-                    (pipeline)
-                    (addLast (into-array ChannelHandler (handlers-factory)))))))
-          (option ChannelOption/SO_BACKLOG (int 128))
-          (childOption ChannelOption/SO_KEEPALIVE true)
-          (childOption ChannelOption/AUTO_READ false)))
+    (.. bootstrap
+        (group group)
+        (channel NioServerSocketChannel)
+        (childHandler
+          (proxy [ChannelInitializer] []
+            (initChannel [channel]
+              (.. channel
+                  (pipeline)
+                  (addLast (into-array ChannelHandler (handlers-factory)))))))
+        (option ChannelOption/SO_BACKLOG (int 128))
+        (childOption ChannelOption/SO_KEEPALIVE true)
+        (childOption ChannelOption/AUTO_READ false))
     bootstrap))
 
 (defn client-handlers [forward-to-channel]
   [
    ;(logging-handler "client")
-   (forward-msg-netty-inbound-handler forward-to-channel)
+   (forward-netty-inbound-handler forward-to-channel)
    (ByteArrayEncoder.)
-   (map-msg-netty-outbound-handler map->zabbix-msg-bytes)])
+   (map-netty-outbound-handler map->zabbix-msg-bytes)])
 
 (defn make-server-handlers []
   [
