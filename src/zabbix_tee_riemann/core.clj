@@ -12,6 +12,7 @@
     [io.netty.channel.nio NioEventLoopGroup]
     [io.netty.handler.codec ByteToMessageDecoder]
     [io.netty.handler.logging LoggingHandler LogLevel]
+    [io.netty.buffer Unpooled]
     [java.nio ByteBuffer ByteOrder]
     [java.io ByteArrayOutputStream]
     [io.netty.handler.codec.bytes ByteArrayEncoder])
@@ -81,7 +82,7 @@
                     (.add out
                           (read-msg->byte-array! msg content-length))))))))))))
 
-(defn logging-handler-netty-duplex-handler [name]
+(defn logging-netty-duplex-handler [name]
   (LoggingHandler. name LogLevel/INFO))
 
 (defn netty-channel-future-listener [callback]
@@ -161,7 +162,9 @@
                   (addLast (into-array ChannelHandler (handlers-factory)))))))
         (option ChannelOption/SO_BACKLOG (int 128))
         (childOption ChannelOption/SO_KEEPALIVE true)
-        (childOption ChannelOption/AUTO_READ false))
+        (childOption ChannelOption/AUTO_READ false)
+        (childOption ChannelOption/AUTO_CLOSE false)
+        )
     bootstrap))
 
 (defn client-handlers [forward-to-channel]
@@ -178,12 +181,12 @@
    (bytes->json-netty-inbound-handler)
    (print-netty-inbound-handler)
    (forward-to-zabbix-server-netty-inbound-handler client-handlers)
-   ;(logging-handler "after-decode")
+   ;(logging-netty-duplex-handler  "after-decode")
    ])
 
-(defn start-server [port]
+(defn start-server [port handlers-factory]
   (let [event-loop-group (NioEventLoopGroup.)
-        bootstrap (server-bootstrap event-loop-group (var make-server-handlers))]
+        bootstrap (server-bootstrap event-loop-group handlers-factory)]
     (let [channel (..
                     (.bind bootstrap port)
                     (sync)
@@ -196,9 +199,23 @@
                 (.shutdownGracefully event-loop-group)))))
       channel)))
 
+(defn start-zabbix-proxy-server [port]
+  (start-server 9002 (var make-server-handlers)))
+
 (defn -main [& args]
-  (start-server 9002))
+  (start-zabbix-proxy-server 9002))
+
+(defn read-channel-netty-inbound-handler [on-read]
+  (proxy [ChannelInboundHandlerAdapter] []
+    (channelRead [ctx msg]
+      (on-read ctx msg))))
+
+(defn channel-active-netty-inbound-handler [on-active]
+  (proxy [ChannelInboundHandlerAdapter] []
+    (channelActive [ctx]
+      (on-active ctx ))))
 
 (comment
-  (def server (start-server 9002))
-  (.close server))
+  (def server (start-zabbix-proxy-server 9002))
+  (.close server)
+  )
