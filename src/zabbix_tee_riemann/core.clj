@@ -28,13 +28,13 @@
 
 (defn long->zabbix-bytes [val]
   (let [byte-buf (ByteBuffer/allocate 8)]
-    (.order byte-buf (ByteOrder/LITTLE_ENDIAN))
+    (.order byte-buf ByteOrder/LITTLE_ENDIAN)
     (.putLong byte-buf (long val))
     (.array byte-buf)))
 
 (defn zabbix-bytes->long [bytes]
   (let [byte-buf (ByteBuffer/allocate 8)]
-    (.order byte-buf (ByteOrder/LITTLE_ENDIAN))
+    (.order byte-buf ByteOrder/LITTLE_ENDIAN)
     (.put byte-buf (byte-array bytes))
     (.getLong byte-buf 0)))
 
