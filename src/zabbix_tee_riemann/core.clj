@@ -90,23 +90,38 @@
     (operationComplete [this fut]
       (callback fut))))
 
-(defn on-complete [netty-future complete-fn]
-  (.addListener netty-future
-    (netty-channel-future-listener complete-fn)))
-
 (defn map-netty-outbound-handler [f]
   (proxy [ChannelOutboundHandlerAdapter] []
     (write [ctx msg promise]
       (.writeAndFlush ctx (f msg) promise))))
 
-(defn forward-netty-inbound-handler [dest-channel]
+(defn flush-and-close! [channel]
+  (-> channel
+      (.writeAndFlush Unpooled/EMPTY_BUFFER)
+      (.addListener ChannelFutureListener/CLOSE)))
+
+(defn on-complete [netty-future complete-fn]
+  (.addListener netty-future
+    (netty-channel-future-listener complete-fn)))
+
+(defn forward-netty-inbound-handler [zbx-agent-channel]
   (proxy [ChannelInboundHandlerAdapter] []
     (channelActive [ctx]
       (.. ctx read))
     (channelInactive [ctx]
-      (.close dest-channel))
+      (flush-and-close! zbx-agent-channel))
     (channelRead [ctx msg]
-      (.writeAndFlush dest-channel msg))))
+      (let [zbx-server-channel (.channel ctx)]
+        (-> zbx-agent-channel
+            (.writeAndFlush msg)
+            (on-complete
+              (fn [result]
+                (if (.isSuccess result)
+                  (.read zbx-server-channel)
+                  (do
+                    (println "failed writing to agent")
+                    (.printStackTrace (.cause result))
+                    (flush-and-close! zbx-server-channel))))))))))
 
 (defn bytes->json-netty-inbound-handler []
   (proxy [ChannelInboundHandlerAdapter] []
@@ -131,6 +146,12 @@
     (channelActive [ctx]
       (on-active ctx ))))
 
+(defn close-on-exception-netty-inbound-handler []
+  (proxy [ChannelInboundHandlerAdapter] []
+    (exceptionCaught [ctx cause]
+      (.printStackTrace cause) ;TODO add proper logging
+      (.. ctx channel close))))
+
 (defn proxy-client-netty-bootstrap
   [event-loop-group channel-class handlers-factory]
   (let [bootstrap (Bootstrap.)]
@@ -150,23 +171,41 @@
     bootstrap))
 
 (defn proxy-netty-inbound-handler
-  [client-handlers]
-  (let [outgoing-channel (atom nil)]
+  [client-handlers-factory]
+  (let [zbx-server-channel (atom nil)]
     (proxy [ChannelInboundHandlerAdapter] []
       (channelActive [ctx]
-        (let [incoming-channel (.. ctx channel )
+        (let [incoming-channel (.. ctx channel)
               client (proxy-client-netty-bootstrap
                        (.eventLoop incoming-channel)
                        (.getClass incoming-channel)
-                       (partial client-handlers incoming-channel))
-              connect-result (.. client (connect "ubuntu-xenial" 10051))]
-            (.addListener connect-result
-                          (netty-channel-future-listener
-                            (fn [_]
-                              (reset! outgoing-channel  (.channel connect-result))
-                              (.read incoming-channel))))))
-        (channelRead [ctx msg]
-          (.writeAndFlush @outgoing-channel msg)))))
+                       (partial client-handlers-factory incoming-channel))]
+          (-> client
+              (.connect "ubuntu-xenial" 10051)
+              (on-complete
+                (fn [connect-result]
+                  (if (.isSuccess connect-result)
+                    (do
+                      (reset! zbx-server-channel  (.channel connect-result))
+                      (.read incoming-channel))
+                    (do
+                      (println "Failed connecting to zabbix server") ; TODO logging
+                      (.printStackTrace (.cause connect-result))
+                      (.close incoming-channel))))))))
+      (channelRead [ctx msg]
+        (let [zbx-agent-channel (.channel ctx)]
+          (-> @zbx-server-channel
+              (.writeAndFlush msg)
+              (on-complete
+                (fn [result]
+                  (if (.isSuccess result)
+                    (.read zbx-agent-channel)
+                    (do
+                      (println "failed writing to server")
+                      (.printStackTrace (.cause result))
+                      (flush-and-close! zbx-agent-channel))))))))
+      (channelInactive [ctx]
+        (flush-and-close! @zbx-server-channel)))))
 
 (defn server-bootstrap [group handlers-factory]
   (let [bootstrap (ServerBootstrap.)]
