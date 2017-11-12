@@ -254,6 +254,7 @@
    (ByteArrayEncoder.)
    (map-netty-outbound-handler map->zabbix-msg-bytes)])
 
+
 (defn make-server-handlers
   [client-handlers-factory zabbix-server]
   [
@@ -266,7 +267,7 @@
    ])
 
 (defn start-zabbix-proxy-server [port zabbix-server]
-  (start-server 9002 (var make-server-handlers) client-handlers zabbix-server))
+  (start-server 9002 (var make-server-handlers) (var client-handlers) zabbix-server))
 
 (defn -main [& args]
   (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
@@ -275,4 +276,59 @@
   (def server
     (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
   (.close server)
+
+  (defn make-client [port]
+    (let [bs (proxy-client-netty-bootstrap
+               (NioEventLoopGroup.)
+               NioSocketChannel
+               (fn []
+                 [(ByteArrayEncoder.)
+                  ;(logging-netty-duplex-handler "client")
+                  (read-channel-netty-inbound-handler
+                    (fn [ctx msg]
+                      (println "received in client: "(.readableBytes msg))
+                      (.. ctx channel close)
+                      ))
+
+                  ;(logging-netty-duplex-handler " a client")
+                  ]))
+          ]
+      (->
+        (.connect bs "localhost" port)
+        (on-failed (fn [result]
+                     (println "failed connecting")
+                     (.printStackTrace (.cause result))))
+        (on-success (fn [_] (println "connected")))
+        (.channel))))
+
+  (defonce clients (atom []))
+  (swap! clients conj (make-client 9002))
+  (-> (.writeAndFlush (last @clients) Unpooled/EMPTY_BUFFER))
+  (-> (.writeAndFlush (last @clients) (map->zabbix-msg-bytes {"request" "active checks" "host" "ubuntu-xenial"}))
+      (on-complete
+        (fn [result]
+          (println result))))
+  (.isActive (last @clients))
+  (.read (last @clients))
+
+  (defonce server-clients (atom []))
+
+  (.read (last @server-clients))
+  (.close (last @server-clients))
+  (->
+    (.writeAndFlush (last @server-clients) (.getBytes "123"))
+    (on-complete (fn [result] (println result))))
+  (.isActive (last @server-clients))
+
+  (defn zbx-server-handlers []
+    [(ByteArrayEncoder.)
+     (channel-active-netty-inbound-handler
+       (fn [ctx]
+         (println "init!")
+         (swap! server-clients conj (.channel ctx))))
+
+    (logging-netty-duplex-handler "hello world")
+     ])
+
+  (defonce zabbix-server (start-server 10101 (var zbx-server-handlers)))
   )
