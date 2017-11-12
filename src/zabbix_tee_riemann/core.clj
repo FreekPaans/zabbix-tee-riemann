@@ -111,17 +111,17 @@
     (channelInactive [ctx]
       (flush-and-close! zbx-agent-channel))
     (channelRead [ctx msg]
-      (let [zbx-server-channel (.channel ctx)]
+      (let [my-channel (.channel ctx)]
         (-> zbx-agent-channel
             (.writeAndFlush msg)
             (on-complete
               (fn [result]
                 (if (.isSuccess result)
-                  (.read zbx-server-channel)
+                  (.read my-channel)
                   (do
                     (println "failed writing to agent")
                     (.printStackTrace (.cause result))
-                    (flush-and-close! zbx-server-channel))))))))))
+                    (flush-and-close! my-channel))))))))))
 
 (defn bytes->json-netty-inbound-handler []
   (proxy [ChannelInboundHandlerAdapter] []
@@ -193,17 +193,17 @@
                       (.printStackTrace (.cause connect-result))
                       (.close incoming-channel))))))))
       (channelRead [ctx msg]
-        (let [zbx-agent-channel (.channel ctx)]
+        (let [my-channel (.channel ctx)]
           (-> @zbx-server-channel
               (.writeAndFlush msg)
               (on-complete
                 (fn [result]
                   (if (.isSuccess result)
-                    (.read zbx-agent-channel)
+                    (.read my-channel)
                     (do
                       (println "failed writing to server")
                       (.printStackTrace (.cause result))
-                      (flush-and-close! zbx-agent-channel))))))))
+                      (flush-and-close! my-channel))))))))
       (channelInactive [ctx]
         (flush-and-close! @zbx-server-channel)))))
 
