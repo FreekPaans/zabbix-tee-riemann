@@ -180,7 +180,7 @@
     bootstrap))
 
 (defn proxy-netty-inbound-handler
-  [client-handlers-factory]
+  [client-handlers-factory {:keys [host port] :as zabbix-server}]
   (let [zbx-server-channel (atom nil)]
     (proxy [ChannelInboundHandlerAdapter] []
       (channelActive [ctx]
@@ -190,7 +190,7 @@
                        (.getClass my-channel)
                        (partial client-handlers-factory my-channel))]
           (-> client
-              (.connect "ubuntu-xenial" 10051)
+              (.connect host port)
               (on-success
                 (fn [connect-result]
                       (reset! zbx-server-channel  (.channel connect-result))
@@ -214,7 +214,7 @@
         (when-let [c @zbx-server-channel]
           (flush-and-close! c))))))
 
-(defn server-bootstrap [group handlers-factory]
+(defn server-bootstrap [group handlers-factory handlers-args]
   (let [bootstrap (ServerBootstrap.)]
     (.. bootstrap
         (group group)
@@ -222,19 +222,20 @@
         (childHandler
           (proxy [ChannelInitializer] []
             (initChannel [channel]
+              (let [handlers (apply handlers-factory handlers-args)]
               (.. channel
                   (pipeline)
-                  (addLast (into-array ChannelHandler (handlers-factory)))))))
+                  (addLast (into-array ChannelHandler handlers)))))))
         (option ChannelOption/SO_BACKLOG (int 128))
         (childOption ChannelOption/SO_KEEPALIVE true)
         (childOption ChannelOption/AUTO_READ false)
-        (childOption ChannelOption/AUTO_CLOSE false)
-        )
+        (childOption ChannelOption/AUTO_CLOSE false))
     bootstrap))
 
-(defn start-server [port handlers-factory]
+(defn start-server [port handlers-factory & handlers-args]
   (let [event-loop-group (NioEventLoopGroup.)
-        bootstrap (server-bootstrap event-loop-group handlers-factory)]
+        bootstrap (server-bootstrap event-loop-group
+                                    handlers-factory handlers-args)]
     (let [channel (.. bootstrap
                     (bind port)
                     (sync)
@@ -253,23 +254,25 @@
    (ByteArrayEncoder.)
    (map-netty-outbound-handler map->zabbix-msg-bytes)])
 
-(defn make-server-handlers []
+(defn make-server-handlers
+  [client-handlers-factory zabbix-server]
   [
    ;(logging-handler "before-decode")
    (zabbix-msg-decoder-netty-inbound-handler)
    (bytes->json-netty-inbound-handler)
    (print-netty-inbound-handler)
-   (proxy-netty-inbound-handler client-handlers)
+   (proxy-netty-inbound-handler client-handlers-factory zabbix-server)
    ;(logging-netty-duplex-handler  "after-decode")
    ])
 
-(defn start-zabbix-proxy-server [port]
-  (start-server 9002 (var make-server-handlers)))
+(defn start-zabbix-proxy-server [port zabbix-server]
+  (start-server 9002 (var make-server-handlers) client-handlers zabbix-server))
 
 (defn -main [& args]
-  (start-zabbix-proxy-server 9002))
+  (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
 
 (comment
-  (def server (start-zabbix-proxy-server 9002))
+  (def server
+    (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
   (.close server)
   )
