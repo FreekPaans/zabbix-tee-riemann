@@ -90,6 +90,10 @@
     (operationComplete [this fut]
       (callback fut))))
 
+(defn on-complete [netty-future complete-fn]
+  (.addListener netty-future
+    (netty-channel-future-listener complete-fn)))
+
 (defn map-netty-outbound-handler [f]
   (proxy [ChannelOutboundHandlerAdapter] []
     (write [ctx msg promise]
@@ -185,16 +189,15 @@
 (defn start-server [port handlers-factory]
   (let [event-loop-group (NioEventLoopGroup.)
         bootstrap (server-bootstrap event-loop-group handlers-factory)]
-    (let [channel (..
-                    (.bind bootstrap port)
+    (let [channel (.. bootstrap
+                    (bind port)
                     (sync)
                     (channel))]
-      (.. channel
-          closeFuture
-          (addListener
-            (netty-channel-future-listener
-              (fn [fut]
-                (.shutdownGracefully event-loop-group)))))
+      (-> channel
+          .closeFuture
+          (on-complete
+            (fn [fut]
+              (.shutdownGracefully event-loop-group))))
       channel)))
 
 (defn client-handlers [forward-to-channel]
