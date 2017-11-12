@@ -104,6 +104,12 @@
   (.addListener netty-future
     (netty-channel-future-listener complete-fn)))
 
+(defn on-success [netty-future success-fn]
+  (on-complete netty-future #(when (.isSuccess %) (success-fn %))))
+
+(defn on-failed [netty-future failed-fn]
+  (on-complete netty-future #(when-not (.isSuccess %) (failed-fn %))))
+
 (defn forward-netty-inbound-handler [zbx-agent-channel]
   (proxy [ChannelInboundHandlerAdapter] []
     (channelActive [ctx]
@@ -114,14 +120,12 @@
       (let [my-channel (.channel ctx)]
         (-> zbx-agent-channel
             (.writeAndFlush msg)
-            (on-complete
+            (on-success (fn [_] (.read my-channel)))
+            (on-failed
               (fn [result]
-                (if (.isSuccess result)
-                  (.read my-channel)
-                  (do
-                    (println "failed writing to agent")
-                    (.printStackTrace (.cause result))
-                    (flush-and-close! my-channel))))))))))
+                (println "failed writing to agent")
+                (.printStackTrace (.cause result))
+                (flush-and-close! my-channel))))))))
 
 (defn bytes->json-netty-inbound-handler []
   (proxy [ChannelInboundHandlerAdapter] []
@@ -175,35 +179,32 @@
   (let [zbx-server-channel (atom nil)]
     (proxy [ChannelInboundHandlerAdapter] []
       (channelActive [ctx]
-        (let [incoming-channel (.. ctx channel)
+        (let [my-channel (.. ctx channel)
               client (proxy-client-netty-bootstrap
-                       (.eventLoop incoming-channel)
-                       (.getClass incoming-channel)
-                       (partial client-handlers-factory incoming-channel))]
+                       (.eventLoop my-channel)
+                       (.getClass my-channel)
+                       (partial client-handlers-factory my-channel))]
           (-> client
               (.connect "ubuntu-xenial" 10051)
-              (on-complete
+              (on-success
                 (fn [connect-result]
-                  (if (.isSuccess connect-result)
-                    (do
                       (reset! zbx-server-channel  (.channel connect-result))
-                      (.read incoming-channel))
-                    (do
-                      (println "Failed connecting to zabbix server") ; TODO logging
-                      (.printStackTrace (.cause connect-result))
-                      (.close incoming-channel))))))))
+                      (.read my-channel)))
+              (on-failed
+                (fn [connect-result]
+                  (println "Failed connecting to zabbix server") ; TODO logging
+                  (.printStackTrace (.cause connect-result))
+                  (.close my-channel))))))
       (channelRead [ctx msg]
         (let [my-channel (.channel ctx)]
           (-> @zbx-server-channel
               (.writeAndFlush msg)
-              (on-complete
+              (on-success (fn [_] (.read my-channel)))
+              (on-failed
                 (fn [result]
-                  (if (.isSuccess result)
-                    (.read my-channel)
-                    (do
                       (println "failed writing to server")
                       (.printStackTrace (.cause result))
-                      (flush-and-close! my-channel))))))))
+                      (flush-and-close! my-channel))))))
       (channelInactive [ctx]
         (flush-and-close! @zbx-server-channel)))))
 
