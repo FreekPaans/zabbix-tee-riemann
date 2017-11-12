@@ -2,7 +2,9 @@
   (:require
     [clojure.java.io :as io]
     [clojure.data.json :as json]
-    [clojure.pprint :refer [pprint]])
+    [clojure.pprint :refer [pprint]]
+    [riemann.client :as riemann]
+    [clojure.set :refer [rename-keys]])
   (:import
     [io.netty.bootstrap ServerBootstrap Bootstrap]
     [io.netty.channel.socket.nio NioServerSocketChannel NioSocketChannel]
@@ -17,7 +19,8 @@
     [java.io ByteArrayOutputStream]
     [io.netty.handler.codec.bytes ByteArrayEncoder]
     [java.util.concurrent LinkedBlockingQueue]
-    [java.util ArrayList])
+    [java.util ArrayList]
+    [java.time Instant])
   (:gen-class))
 
 (defn ->json-bytes [msg]
@@ -289,9 +292,53 @@
     (start-zabbix-proxy-server 9002 msg-queue {:host "ubuntu-xenial" :port 10051}))
   (.close server)
 
-  (let [l (ArrayList.)]
-    (.drainTo msg-queue l)
-    (pprint (seq l)))
+  (defn dequeue-all! [q]
+    (let [l (ArrayList.)]
+      (.drainTo q l)
+      (seq l)))
+
+  (defn try-parse-double [v]
+    (try
+      (Double/parseDouble v)
+      (catch Throwable _ nil)))
+
+  (defn zabbix-event->riemann-event
+    [zbx-event]
+    (let [result
+          (-> zbx-event
+              (select-keys ["host" "key" "clock"])
+              (rename-keys {"host" :host
+                            "key" :service
+                            "clock" :time})
+              (assoc :tags ["zabbix"]))
+          metric (get zbx-event "value")
+          metric' (try-parse-double metric)]
+      (cond
+        metric' (assoc result :metric metric')
+        :else (assoc result
+                     :metric 0
+                     :zabbix-metric metric
+                     :metric-parse-error true))))
+
+  (defn zabbix-msgs->riemann-events
+    [msgs]
+    (->> msgs
+         (filter #(= (get % "request") "agent data"))
+         (mapcat #(get % "data"))
+         (map zabbix-event->riemann-event)))
+
+  (.clear msg-queue)
+  (def msgs (dequeue-all! msg-queue))
+
+  (defonce riemann (riemann/tcp-client {:host "ubuntu-xenial"}))
+  (def send-result (riemann/send-events riemann (zabbix-msgs->riemann-events msgs)))
+  @send-result
+  (riemann/send-event riemann
+                      (zabbix-event->riemann-event {"host" "mine"
+                                                    "key" "usage"
+                                                    "clock" (.. (Instant/now) getEpochSecond)
+                                                    "value" "123"}))
+
 
   (defn make-client [port]
     (let [bs (proxy-client-netty-bootstrap
