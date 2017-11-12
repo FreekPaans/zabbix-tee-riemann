@@ -206,7 +206,8 @@
                       (.printStackTrace (.cause result))
                       (flush-and-close! my-channel))))))
       (channelInactive [ctx]
-        (flush-and-close! @zbx-server-channel)))))
+        (when-let [c @zbx-server-channel]
+          (flush-and-close! c))))))
 
 (defn server-bootstrap [group handlers-factory]
   (let [bootstrap (ServerBootstrap.)]
