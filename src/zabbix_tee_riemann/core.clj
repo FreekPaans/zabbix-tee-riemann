@@ -18,7 +18,7 @@
     [java.nio ByteBuffer ByteOrder]
     [java.io ByteArrayOutputStream]
     [io.netty.handler.codec.bytes ByteArrayEncoder]
-    [java.util.concurrent LinkedBlockingQueue]
+    [java.util.concurrent LinkedBlockingQueue Executors]
     [java.util ArrayList]
     [java.time Instant])
   (:gen-class))
@@ -283,8 +283,76 @@
 (defn -main [& args]
   (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
 
+(defn try-parse-double [v]
+  (try
+    (Double/parseDouble v)
+    (catch Throwable _ nil)))
+
+(defn zabbix-event->riemann-event
+  [zbx-event]
+  (let [result
+        (-> zbx-event
+            (select-keys ["host" "key" "clock"])
+            (rename-keys {"host" :host
+                          "key" :service
+                          "clock" :time})
+            (assoc :tags ["zabbix"]))
+        metric (get zbx-event "value")]
+    (if-let [metric' (try-parse-double metric)]
+      (assoc result :metric metric')
+      (assoc result
+             :metric 0
+             :zabbix-metric metric
+             :metric-parse-error true))))
+
+(defn zabbix-msgs->riemann-events
+  [msgs]
+  (->> msgs
+       (filter #(= (get % "request") "agent data"))
+       (mapcat #(get % "data"))
+       (map zabbix-event->riemann-event)))
+
+(defn dequeue-all! [q]
+  (let [l (ArrayList.)]
+    (.drainTo q l)
+    (seq l)))
+
+(defn ->riemann! [riemann q]
+  (let [events (dequeue-all! q)]
+    (when (seq events)
+      (riemann/send-events riemann
+                           (zabbix-msgs->riemann-events events)))))
+
 (comment
   (defonce msg-queue (LinkedBlockingQueue. 100))
+  (defonce riemann (riemann/tcp-client {:host "ubuntu-xenial"}))
+  (->riemann! riemann msg-queue)
+  (def t (Thread. (fn [] (Thread/sleep 5000) (println "hello"))))
+
+
+  (def x (atom nil))
+  (def f (future (Thread/sleep 5000) (println "hello" )))
+  (deref f)
+
+
+
+  (def e (Executors/newSingleThreadExecutor))
+  (.cancel r true)
+  (.shutdownNow e)
+  (def r (.submit e (fn []
+                      (try
+                        (println "isDaemon?" (.isDaemon (Thread/currentThread)))
+                        (Thread/sleep 5000)
+                        (println "done sleeping")
+                        (catch InterruptedException e
+                          (println "Was interrupted"))
+                        ))))
+  (.start t)
+  (future-cancel f)
+  (deref f)
+
+
+
   (.size msg-queue)
   (.peek msg-queue)
   (.clear msg-queue)
@@ -292,52 +360,20 @@
     (start-zabbix-proxy-server 9002 msg-queue {:host "ubuntu-xenial" :port 10051}))
   (.close server)
 
-  (defn dequeue-all! [q]
-    (let [l (ArrayList.)]
-      (.drainTo q l)
-      (seq l)))
-
-  (defn try-parse-double [v]
-    (try
-      (Double/parseDouble v)
-      (catch Throwable _ nil)))
-
-  (defn zabbix-event->riemann-event
-    [zbx-event]
-    (let [result
-          (-> zbx-event
-              (select-keys ["host" "key" "clock"])
-              (rename-keys {"host" :host
-                            "key" :service
-                            "clock" :time})
-              (assoc :tags ["zabbix"]))
-          metric (get zbx-event "value")
-          metric' (try-parse-double metric)]
-      (cond
-        metric' (assoc result :metric metric')
-        :else (assoc result
-                     :metric 0
-                     :zabbix-metric metric
-                     :metric-parse-error true))))
-
-  (defn zabbix-msgs->riemann-events
-    [msgs]
-    (->> msgs
-         (filter #(= (get % "request") "agent data"))
-         (mapcat #(get % "data"))
-         (map zabbix-event->riemann-event)))
-
   (.clear msg-queue)
   (def msgs (dequeue-all! msg-queue))
 
-  (defonce riemann (riemann/tcp-client {:host "ubuntu-xenial"}))
   (def send-result (riemann/send-events riemann (zabbix-msgs->riemann-events msgs)))
   @send-result
   (riemann/send-event riemann
-                      (zabbix-event->riemann-event {"host" "mine"
+                      (assoc
+                        (zabbix-event->riemann-event {"host" "mine"
                                                     "key" "usage"
-                                                    "clock" (.. (Instant/now) getEpochSecond)
-                                                    "value" "123"}))
+                                                    "clock" (-> (Instant/now)
+                                                                .getEpochSecond
+                                                                (- 120))
+                                                    "value" "123"})
+                        :ttl 300))
 
 
   (defn make-client [port]
