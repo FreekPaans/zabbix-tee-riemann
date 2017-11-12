@@ -323,9 +323,25 @@
       (riemann/send-events riemann
                            (zabbix-msgs->riemann-events events)))))
 
+(defn zabbix->riemann-loop [riemann q]
+  (while true
+    (when-not (->riemann! riemann q)
+      (Thread/sleep 100))))
+
+
+
+
 (comment
   (defonce msg-queue (LinkedBlockingQueue. 100))
   (defonce riemann (riemann/tcp-client {:host "ubuntu-xenial"}))
+  (def e (Executors/newSingleThreadExecutor))
+  (def the-loop (.submit e (fn []
+                             (zabbix->riemann-loop riemann msg-queue))))
+  (.cancel the-loop true)
+  (.size msg-queue)
+
+
+
   (->riemann! riemann msg-queue)
   (def t (Thread. (fn [] (Thread/sleep 5000) (println "hello"))))
 
@@ -336,7 +352,6 @@
 
 
 
-  (def e (Executors/newSingleThreadExecutor))
   (.cancel r true)
   (.shutdownNow e)
   (def r (.submit e (fn []
