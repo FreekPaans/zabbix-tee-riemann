@@ -5,7 +5,7 @@
     [clojure.pprint :refer [pprint]])
   (:import
     [io.netty.bootstrap ServerBootstrap Bootstrap]
-    [io.netty.channel.socket.nio NioServerSocketChannel]
+    [io.netty.channel.socket.nio NioServerSocketChannel NioSocketChannel]
     [io.netty.channel ChannelHandlerContext ChannelInboundHandlerAdapter
      ChannelInitializer ChannelOption ChannelHandler ChannelFutureListener
      ChannelOutboundHandlerAdapter]
@@ -150,9 +150,14 @@
     (channelActive [ctx]
       (on-active ctx ))))
 
-(defn close-on-exception-netty-inbound-handler []
+(defn channel-exception-caught-netty-inbound-handler [on-exception]
   (proxy [ChannelInboundHandlerAdapter] []
     (exceptionCaught [ctx cause]
+      (on-exception ctx cause))))
+
+(defn close-on-exception-netty-inbound-handler []
+  (channel-exception-caught-netty-inbound-handler
+    (fn [ctx cause]
       (.printStackTrace cause) ;TODO add proper logging
       (.. ctx channel close))))
 
@@ -243,7 +248,7 @@
 
 (defn client-handlers [forward-to-channel]
   [
-   ;(logging-handler "client")
+   ;(logging-netty-duplex-handler "client")
    (forward-netty-inbound-handler forward-to-channel)
    (ByteArrayEncoder.)
    (map-netty-outbound-handler map->zabbix-msg-bytes)])
