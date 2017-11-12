@@ -15,7 +15,9 @@
     [io.netty.buffer Unpooled]
     [java.nio ByteBuffer ByteOrder]
     [java.io ByteArrayOutputStream]
-    [io.netty.handler.codec.bytes ByteArrayEncoder])
+    [io.netty.handler.codec.bytes ByteArrayEncoder]
+    [java.util.concurrent LinkedBlockingQueue]
+    [java.util ArrayList])
   (:gen-class))
 
 (defn ->json-bytes [msg]
@@ -254,28 +256,42 @@
    (ByteArrayEncoder.)
    (map-netty-outbound-handler map->zabbix-msg-bytes)])
 
+(defn queue-msg-netty-inbound-handler [msg-queue]
+  (read-channel-netty-inbound-handler
+    (fn [ctx msg]
+      (.offer msg-queue msg) ; offer doesn't block, but disregards the value if the queue is full
+      (.fireChannelRead ctx msg))))
 
 (defn make-server-handlers
-  [client-handlers-factory zabbix-server]
+  [client-handlers-factory msg-queue zabbix-server]
   [
    ;(logging-handler "before-decode")
    (zabbix-msg-decoder-netty-inbound-handler)
    (bytes->json-netty-inbound-handler)
+   (queue-msg-netty-inbound-handler msg-queue)
    (print-netty-inbound-handler)
    (proxy-netty-inbound-handler client-handlers-factory zabbix-server)
    ;(logging-netty-duplex-handler  "after-decode")
    ])
 
-(defn start-zabbix-proxy-server [port zabbix-server]
-  (start-server 9002 (var make-server-handlers) (var client-handlers) zabbix-server))
+(defn start-zabbix-proxy-server [port & handler-args]
+  (apply start-server 9002 (var make-server-handlers) (var client-handlers) handler-args))
 
 (defn -main [& args]
   (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
 
 (comment
+  (defonce msg-queue (LinkedBlockingQueue. 100))
+  (.size msg-queue)
+  (.peek msg-queue)
+  (.clear msg-queue)
   (def server
-    (start-zabbix-proxy-server 9002 {:host "ubuntu-xenial" :port 10051}))
+    (start-zabbix-proxy-server 9002 msg-queue {:host "ubuntu-xenial" :port 10051}))
   (.close server)
+
+  (let [l (ArrayList.)]
+    (.drainTo msg-queue l)
+    (pprint (seq l)))
 
   (defn make-client [port]
     (let [bs (proxy-client-netty-bootstrap
